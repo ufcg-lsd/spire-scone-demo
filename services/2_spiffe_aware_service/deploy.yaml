@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: spiffe-service
+  labels:
+    app: spiffe-service
+spec:
+  selector:
+    app: spiffe-service
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spiffe-service
+  labels:
+    app: spiffe-service
+spec:
+  selector:
+    matchLabels:
+      app: spiffe-service
+  template:
+    metadata:
+      labels:
+        app: spiffe-service
+    spec:
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: spiffe-service
+          image: silvamatteus/spiffe-service:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python"]
+          args: ["/app/spiffe_service.py"]
+          env:
+            - name: SCONE_CAS_ADDR
+              value: "5-4-0.scone-cas.cf"
+            - name: SCONE_CONFIG_ID
+              value: ${MY_NAMESPACE}/svid-session/spiffe-service
+            - name: SCONE_LAS_ADDR
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: SCONE_LOG
+              value: "7"
+          resources:
+            limits:
+              sgx.k8s.io/sgx: 1

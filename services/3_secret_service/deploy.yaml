@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: secret-service
+  labels:
+    app: secret-service
+spec:
+  selector:
+    app: secret-service
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secret-service
+  labels:
+    app: secret-service
+spec:
+  selector:
+    matchLabels:
+      app: secret-service
+  template:
+    metadata:
+      labels:
+        app: secret-service
+    spec:
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: secret-service
+          workingDir: /app
+          image: silvamatteus/secret-service:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3"]
+          args: ["/app/secret_service.py"]
+          env:
+            - name: SCONE_CAS_ADDR
+              value: "5-4-0.scone-cas.cf"
+            - name: SCONE_CONFIG_ID
+              value: ${MY_NAMESPACE}/netshield-session/secret-service
+            - name: SCONE_LAS_ADDR
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: SCONE_LOG
+              value: "7"
+          resources:
+            limits:
+              sgx.k8s.io/sgx: 1

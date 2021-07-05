@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scone-cli
+  namespace: scone
+  labels:
+    app: scone-cli
+spec:
+  selector:
+    matchLabels:
+      app: scone-cli
+  template:
+    metadata:
+      namespace: scone
+      labels:
+        app: scone-cli
+    spec:
+      containers:
+        - name: scone-cli
+          image: registry.scontain.com:5050/sconecuratedimages/spire:python3-network-shield-experimental
+          imagePullPolicy: IfNotPresent
+          command: ["sleep"]
+          args: ["1000000000"]

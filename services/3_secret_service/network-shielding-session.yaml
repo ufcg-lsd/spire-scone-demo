@@ -1,0 +1,38 @@
+name: ${MY_NAMESPACE}/netshield-session
+version: "0.3"
+
+services:
+  - name: secret-service
+    mrenclaves: [43ed1f0b2cab051fb38868b496357cef2c521b50208585d85814d727b6f4a629]
+    command: python3 /app/secret_service.py
+    pwd: /app
+    environment:
+      SCONE_MODE: hw
+      SCONE_LOG: 7
+      # network shield variables
+      SCONE_NETWORK_SHIELD: "protected"
+      SCONE_NETWORK_SHIELD_SERVER_1: "protected"
+      SCONE_NETWORK_SHIELD_SERVER_1_PORT: "TCP:5000"
+      SCONE_NETWORK_SHIELD_SERVER_1_IDENTITY: |
+        $$SCONE::svid:privatekey:pkcs8:pem$$
+        $$SCONE::svid:crt$$
+        $$SCONE::svid:chain$$
+
+      SCONE_NETWORK_SHIELD_SERVER_1_CLIENT_AUTH: "disabled"
+
+ 
+secrets:
+  - name: svid
+    import:
+      session: ${MY_NAMESPACE}/netshield-session-spire-svid
+      secret: svid
+  - name: bundle
+    import:
+      session: ${MY_NAMESPACE}/spire-ca
+      secret: spire-ca
+
+
+security:
+  attestation:
+    tolerate: [debug-mode, hyperthreading, outdated-tcb, insecure-igpu]
+    ignore_advisories: "*"

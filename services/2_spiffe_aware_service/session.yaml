@@ -1,0 +1,41 @@
+name: ${MY_NAMESPACE}/svid-session
+version: "0.3"
+
+services:
+  - name: spiffe-service
+    image_name: svid-image
+    mrenclaves: [43ed1f0b2cab051fb38868b496357cef2c521b50208585d85814d727b6f4a629]
+    command: python3 /app/spiffe_service.py
+    environment:
+      SCONE_MODE: hw
+      SCONE_LOG: 7
+      SVID_CERT_PATH: /certs/svid.crt
+      SVID_KEY_PATH: /certs/svid.key
+      BUNDLE_PATH: /certs/bundle.crt
+      SECRET_SERVICE_URL: https://secret-service:5000
+ 
+secrets:
+  - name: svid
+    import:
+      session: ${MY_NAMESPACE}/svid-session-spire-svid
+      secret: svid
+  - name: bundle
+    import:
+      session: ${MY_NAMESPACE}/spire-ca
+      secret: spire-ca
+
+images:
+  - name: svid-image
+    injection_files:
+      - path: /certs/svid.crt
+        content: |
+          $$SCONE::svid:crt$$$$SCONE::svid:chain$$
+      - path: /certs/svid.key
+        content: $$SCONE::svid:privatekey:pkcs8:pem$$
+      - path: /certs/bundle.crt
+        content: $$SCONE::bundle:crt$$
+
+security:
+  attestation:
+    tolerate: [debug-mode, hyperthreading, outdated-tcb, insecure-igpu]
+    ignore_advisories: "*"

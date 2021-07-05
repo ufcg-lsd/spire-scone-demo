@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spiffe-aware-client
+  labels:
+    app: spiffe-aware-client
+spec:
+  selector:
+    matchLabels:
+      app: spiffe-aware-client
+  template:
+    metadata:
+      labels:
+        app: spiffe-aware-client
+    spec:
+      hostPID: true
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: spiffe-aware-client
+          image: silvamatteus/spiffe-aware-client:latest
+          imagePullPolicy: IfNotPresent
+          command: ["spiffe-aware-client"]
+          env:
+            - name: AGENT_SOCKET_PATH
+              value: unix:///run/spire/sockets/agent.sock
+            - name: SERVER_URL
+              value: https://spiffe-service:5000
+            - name: SERVER_TRUST_DOMAIN
+              value: example.org
+            - name: SERVER_SPIFFE_ID
+              value: scone-service
+          volumeMounts:
+            - name: spire-agent-socket
+              mountPath: /run/spire/sockets
+              readOnly: true
+      volumes:
+        - name: spire-agent-socket
+          hostPath:
+            path: /run/spire/sockets
+            type: Directory

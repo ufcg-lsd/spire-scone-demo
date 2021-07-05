@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  namespace: scone
+  name: las
+  labels:
+    app.kubernetes.io/name: las
+    app.kubernetes.io/instance: las
+    app.kubernetes.io/version: "5.4.0"
+    app: las
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: las
+      app.kubernetes.io/instance: las
+      app: las
+  template:
+    metadata:
+      namespace: scone
+      labels:
+        app.kubernetes.io/name: las
+        app.kubernetes.io/instance: las
+        app: las
+    spec:
+      containers:
+        - name: las
+          image: registry.scontain.com:5050/sconecuratedimages/spire:las-scone5.4.0
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            capabilities:
+              add: ["SYS_RAWIO"]
+          ports:
+          - containerPort: 18766
+            name: attestation
+            protocol: TCP
+            hostPort: 18766
+          resources:
+            limits:
+              sgx.k8s.io/sgx: 1
