@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: scone-cli
-          image: registry.scontain.com:5050/sconecuratedimages/spire:python3-network-shield-experimental
+          image: registry.scontain.com:5050/sconecuratedimages/spire:network-shield-python-alpha3
           imagePullPolicy: IfNotPresent
           command: ["sleep"]
           args: ["1000000000"]

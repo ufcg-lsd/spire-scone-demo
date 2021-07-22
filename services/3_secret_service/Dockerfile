@@ -1,4 +1,4 @@
-FROM registry.scontain.com:5050/sconecuratedimages/spire:python3-network-shield-experimental
+FROM registry.scontain.com:5050/sconecuratedimages/spire:network-shield-python-alpha3
 
 RUN pip install flask && mkdir /app && echo '{"secret": "Eve is good and Bob is the bad guy"}' > /app/index.html
 
