@@ -299,7 +299,7 @@ kubectl exec -it -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].me
 
 ./bin/spire-server entry create -parentID $AGENT_ID \
         -registrationUDSPath /tmp/spire-registration.sock \
-        -spiffeID spiffe://example.org/scone-service \
+        -spiffeID spiffe://example.org/scone-legacy-service \
         -selector svidstore:type:scone_cas_secretsmanager \
         -selector cas_session_hash:$HASH_SERVICE_3 \
         -selector cas_session_name:$MY_NAMESPACE/netshield-session \
