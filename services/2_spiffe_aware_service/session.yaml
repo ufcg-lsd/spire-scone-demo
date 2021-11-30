@@ -17,11 +17,11 @@ services:
 secrets:
   - name: svid
     import:
-      session: ${MY_NAMESPACE}/svid-session-spire-svid
+      session: ${MY_NAMESPACE}/svid-session-injector
       secret: svid
   - name: bundle
     import:
-      session: ${MY_NAMESPACE}/spire-ca
+      session: ${MY_NAMESPACE}/bundle-session-injector
       secret: spire-ca
 
 images:
@@ -37,5 +37,8 @@ images:
 
 security:
   attestation:
-    tolerate: [debug-mode, hyperthreading, outdated-tcb, insecure-igpu]
+    # WARNING: For production environments, you must specify TCB
+    # tolerations and ignored Intel Security Advisories.
+    tolerate: [debug-mode, hyperthreading, outdated-tcb, insecure-igpu,
+               insecure-configuration, software-hardening-needed]
     ignore_advisories: "*"

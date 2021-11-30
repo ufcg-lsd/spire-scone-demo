@@ -19,7 +19,7 @@ data:
       NodeAttestor "k8s_sat" {
         plugin_data {
           # NOTE: Change this to your cluster name
-          cluster = "kubernetes"
+          cluster = "minikube"
         }
       }
 
@@ -37,19 +37,17 @@ data:
         }
       }
 
-      SVIDStore "scone_cas_secretsmanager" {
+      SVIDStore "sconecas_sessionmanager" {
         plugin_data {
-          cas_address = "https://5-4-0.scone-cas.cf:8081"
-
+          cas_connection_string = "https://5-6-0.scone-cas.cf:8081"
           cas_client_certificate = "/run/spire/config/session.crt"
           cas_client_key = "/run/spire/config/session.key"
+          trust_anchor_certificate = "/run/spire/config/trustanchor.pem"
 
           cas_predecessor_dir = "/run/spire/data/store-svid-scone"
-
           svid_session_template_file = "/run/spire/config/svid_session_template.yaml"
-          ca_bundle_session_template_file = "/run/spire/config/ca_session_template.yaml"
+          bundle_session_template_file = "/run/spire/config/ca_session_template.yaml"
           federated_bundles_session_template_file = "/run/spire/config/fed_bundles_session_template.yaml"
-          trust_anchor_certificate = "/run/spire/config/trustanchor.pem"
         }
       }
 
@@ -141,7 +139,7 @@ data:
     iQcxpXHaATwJ8Ipd+gcUsr8SJ/9X
     -----END PRIVATE KEY-----
   svid_session_template.yaml: |
-    name: <\session-name-selector>-spire-svid
+    name: <\session-name-selector>-injector
     version: "0.3"
     predecessor: <\predecessor>
     secrets:
@@ -149,24 +147,28 @@ data:
         kind: x509
         value: |
             <\svid>
+        issuer: svid-intermediates
         export:
             session: <\session-name-selector>
             session_hash: <\session-hash-selector>
         private_key: svid_key
-        issuer: svid-chain
-      - name: svid-chain
+      - name: svid-intermediates
         kind: x509-ca
         value: |
-            <\intermediate-svid-cas>
-      - name: svid_key
-        kind: private-key
+            <\svid-intermediates>
         export:
             session: <\session-name-selector>
             session_hash: <\session-hash-selector>
+      - name: svid_key
+        kind: private-key
         value: |
             <\svid-key>
+        export:
+            session: <\session-name-selector>
+            session_hash: <\session-hash-selector>
+    
   ca_session_template.yaml: |
-    name: ${MY_NAMESPACE}/spire-ca
+    name: <\trust-bundle-session-name>-injector
     version: "0.3"
     predecessor: <\predecessor>
     secrets:
@@ -174,9 +176,10 @@ data:
         kind: x509-ca
         export_public: true
         value: |
-            <\trust-bundle-ca>
+            <\trust-bundle>
+
   fed_bundles_session_template.yaml: |
-    name: ${MY_NAMESPACE}/spire-federated-bundles
+    name: <\fed-bundles-session-name>
     version: "0.3"
     predecessor: <\predecessor>
     secrets:
@@ -184,17 +187,27 @@ data:
         kind: x509-ca
         export_public: true
         value: |
-            <\trust-bundle-ca>
+            <\federated-bundles>
+
   # Ignored in silvamatteus/spire-agent-scone:lastest
   # to simplify the demonstration.
   # In a real scenario, a valid trust anchor must be set. 
   trustanchor.pem: |
     -----BEGIN CERTIFICATE-----
-    MIIBTDCB86ADAgECAggQvWLpMSLV3zAKBggqhkjOPQQDAjAOMQwwCgYDVQQDDANj
-    YXMwHhcNMjEwNDE5MTI0MjU0WhcNMjIwNDE5MTI0MjU0WjAXMRUwEwYDVQQDDAxj
-    YXMtaW5zdGFuY2UwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQQuDxktHJkNjL9
-    JU9JW9l205PMe0V68Ypnv8fzg6aw97s9yRwbUD1qAswCG9RAl5Eh5grOwzH2Z7Fn
-    nbFMA+FhozIwMDAdBgNVHQ4EFgQU7BDA0kQP1fvG9ICzfDhJgEGSXoEwDwYDVR0T
-    AQH/BAUwAwEB/zAKBggqhkjOPQQDAgNIADBFAiEA3MUn7sCqe+23cvXKAZnWjM3x
-    YyKULK7RSHHZrC6wfIgCIGI2n3fksq3vvd4frdlAoBPZUu3vkVWscSxg1OYwLeSG
+    MIIBSzCB86ADAgECAghOOPIfwEXXGjAKBggqhkjOPQQDAjAOMQwwCgYDVQQDDANj
+    YXMwHhcNMjExMTE2MTgxODU2WhcNMjIxMTE2MTgxODU2WjAXMRUwEwYDVQQDDAxj
+    YXMtaW5zdGFuY2UwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASEZpwAxkvHUziS
+    mmln3J94ncagcw9WrTBcLTdneJl9bMl+EWQP139sSQLbJP0AlQqx13BP0qTh7f8Z
+    vbD4A1aZozIwMDAdBgNVHQ4EFgQUqRB0UpdCbkK8k1lHqvBl5a1xJ8IwDwYDVR0T
+    AQH/BAUwAwEB/zAKBggqhkjOPQQDAgNHADBEAiAqozKMRFS0m9qT5wGgxbUjkJnE
+    RmjKNKwEK2KLB9wMiwIgfVcILdZ/kXPdVukEsOEOJ8/aseV4lTX57sXdL4mYW6w=
+    -----END CERTIFICATE-----
+    -----BEGIN CERTIFICATE-----
+    MIIBRDCB66ADAgECAgkAxwc2p5TXQQowCgYIKoZIzj0EAwIwDjEMMAoGA1UEAwwD
+    Y2FzMB4XDTIxMTExNjE4MTg1NloXDTIyMTExNjE4MTg1NlowDjEMMAoGA1UEAwwD
+    Y2FzMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEABKfJw2kSav0+P/gE55rNQJV
+    bZvZO523BtyvngCw0xSLolxKRD8giDAjH2JEzJMSK754x6GnzoFElZrGVBdgXKMy
+    MDAwHQYDVR0OBBYEFLCnrlBxlEEhZJBsIaEpM7Qb9wUjMA8GA1UdEwEB/wQFMAMB
+    Af8wCgYIKoZIzj0EAwIDSAAwRQIgIE0vKM5BZZ1D3uTNIUbKvPxG6rpaMmdz+SVX
+    k5N/SWwCIQCZ6SHAZbTi1bjmo3937HC9roHusgQ6R2Sods0H5FXspQ==
     -----END CERTIFICATE-----

@@ -38,7 +38,7 @@ spec:
           args: ["/app/spiffe_service.py"]
           env:
             - name: SCONE_CAS_ADDR
-              value: "5-4-0.scone-cas.cf"
+              value: "5-6-0.scone-cas.cf"
             - name: SCONE_CONFIG_ID
               value: ${MY_NAMESPACE}/svid-session/spiffe-service
             - name: SCONE_LAS_ADDR

@@ -62,7 +62,8 @@ spec:
           args: ["-t", "30", "spire-server:8081"]
       containers:
         - name: spire-agent
-          image: silvamatteus/spire-agent-scone:latest
+          #image: silvamatteus/spire-agent-scone:latest
+          image: spire-agent:improve-usability
           imagePullPolicy: IfNotPresent
           args: ["-config", "/run/spire/config/agent.conf"]
           volumeMounts:
