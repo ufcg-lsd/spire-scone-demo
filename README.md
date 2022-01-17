@@ -24,12 +24,15 @@ To prepare the environment:
 - Install Minikube and kubectl.
 
 ```bash
+# Install minikube
 curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
 sudo install minikube-linux-amd64 /usr/local/bin/minikube
 
+# Install kubectl
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 
+# Raise cluster
 minikube start --cpus=2 --memory=6g
 eval $(minikube docker-env)
 ```
@@ -53,36 +56,45 @@ kubectl apply -f scone/sgx-dev-plugin.yaml
 kubectl apply -f scone/scone-namespace.yaml 
 kubectl apply -f scone/las-daemonset.yaml
 kubectl apply -f scone/cli-scone.yaml
+
 kubectl get pods -n scone
 ```
 
-In this demonstration, we will use a public CAS at `5-4-0.scone-cas.cf`. In order to use this CAS, we need to create a namepace to post the sessions (configuration and attestation info for confidential workloads) in a way to not overlap with other users.
+In this demonstration, we will use a public CAS at `5-6-0.scone-cas.cf`. In order to use this CAS, we need to create a namepace to post the sessions (configuration and attestation info for confidential workloads) in a way to not overlap with other users.
 
 To do this, we can create a random string to be our namespace name.
 
 ```bash
+# Create variable MY_NAMESPACE
 export MY_NAMESPACE=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 15 ; echo '')
 
+# Provide CLI address for next commands
+export SCONE_CLI_POD=$(kubectl -n scone get pods \
+  -o=jsonpath='{.items[0].metadata.name}' -l app=scone-cli)
+
 # Make $MY_NAMESPACE available inside the scone-cli container
-kubectl exec -it -n scone $(kubectl get pods -n scone -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=scone-cli)  -- /bin/bash -c 'echo "export MY_NAMESPACE='$MY_NAMESPACE'" > /root/.bashrc'
+kubectl exec -it -n scone \
+  $SCONE_CLI_POD -- /bin/bash \
+  -c 'echo "export MY_NAMESPACE='$MY_NAMESPACE'" > /root/.bashrc'
 
-kubectl cp scone/scone-session-namespace.yaml \
-    scone/$(kubectl get pods -n scone -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=scone-cli):scone-session-namespace.yaml
+# Copy over scone session for namespace
+kubectl cp scone/scone-service-namespace.yaml \
+    scone/$SCONE_CLI_POD:scone-service-namespace.yaml
 
-kubectl exec -it -n scone $(kubectl get pods -n scone -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=scone-cli)  -- /bin/bash
+# Exec bash into CLI container
+kubectl exec -it -n scone $SCONE_CLI_POD  -- /bin/bash
 
 # Now, inside the scone-cli container, you can use `env` to make sure $MY_NAMESPACE is set
 # Notice the prompt `bash-5.0#` indicating you're inside the container
 
 # Attest the CAS using 
-scone cas attest 5-4-0.scone-cas.cf	 -C -G --only_for_testing-trust-any \
-    --only_for_testing-debug --only_for_testing-ignore-signer
+scone cas attest 5-6-0.scone-cas.cf \
+  -C -G --only_for_testing-trust-any \
+  --only_for_testing-debug --only_for_testing-ignore-signer
 
-# Create the namespace into CAS
-scone session create scone-session-namespace.yaml --use-env
+# Create the namespace for the Services' sessions in CAS
+scone session create scone-service-namespace.yaml --use-env
+
 exit
 ```
 
@@ -98,16 +110,19 @@ kubectl apply -f spire/server-statefulset.yaml
 kubectl apply -f spire/server-service.yaml
 ```
 
-Now, deploy an SGX-enabled SPIRE Agent.
+Now, deploy a SPIRE Agent configured with a SCONE SGX related plugin.
 
 ```bash
 kubectl apply -f spire/agent-account.yaml
 kubectl apply -f spire/agent-cluster-role.yaml
-envsubst < spire/agent-configmap.yaml | kubectl apply -f -
+kubectl apply -f spire/agent-configmap.yaml
 kubectl apply -f spire/agent-daemonset.yaml
 
 kubectl get pods -n spire
 ```
+
+* **OBS:** The file `spire/agent-configmap.yaml` contains among other configuration for the SPIRE Agent the templates used by the "sconecas_sessionmanager" plugin. These templates are the skeleton of the scone sessions that will be posted by the plugin. A service gets its SVID by importing secrets from these sessions that we can peek at `spire/agent-configmap.yaml`. 
+
 
 Wait for the Agent to present the message `msg="Starting Workload and SDS APIs"`, like below.
 
@@ -117,8 +132,10 @@ time="2021-07-07T14:00:40Z" level=info msg="Starting Workload and SDS APIs" subs
 You can use `kubectl` to watch the Agent logs.
 
 ```bash
-kubectl logs -f -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spire-agent)
+kubectl logs -f -n spire \
+  $(kubectl get pods -n spire \
+  -o=jsonpath='{.items[0].metadata.name}' \
+  -l app=spire-agent)
 # press Ctrl+C to detach the logs
 ```
 
@@ -148,19 +165,25 @@ kubectl logs -f -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].met
 To solve this, we will create the registration entry for `Service 1`, with the following commands.
 
 ```bash
-# Set Agent ID for the next commands
-AGENT_ID=$(kubectl exec -it -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spire-server) -- /bin/sh -c './bin/spire-server agent list' | grep "Spiffe ID" | awk '{print $4}' | tr -d '\r')
+# Set Server address for next commands
+SPIRE_SERVER_POD=$(kubectl get pods -n spire \
+  -o=jsonpath='{.items[0].metadata.name}' -l app=spire-server) 
 
-kubectl exec -it -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spire-server)  -- /bin/sh -c 'echo "export AGENT_ID='$AGENT_ID'" >> /root/.shrc'
+# Set Agent ID for the next commands
+AGENT_ID=$(kubectl exec -it -n spire \
+  $SPIRE_SERVER_POD -- /bin/sh -c \
+  './bin/spire-server agent list' | grep "SPIFFE ID" | awk '{print $4}' | tr -d '\r')
+
+# Inject $AGENT_ID into SPIRE server container
+kubectl exec -it -n spire \
+  $SPIRE_SERVER_POD  -- /bin/sh -c \
+  'echo "export AGENT_ID='$AGENT_ID'" >> /root/.shrc'
 
 # Enter the spire-server container to register Service 1
-kubectl exec -it -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spire-server) -- /bin/sh -c 'ENV=/root/.shrc /bin/sh'
+kubectl exec -it -n spire $SPIRE_SERVER_POD -- /bin/sh -c 'ENV=/root/.shrc /bin/sh'
 
+# Create Service 1's entry
 ./bin/spire-server entry create -parentID $AGENT_ID \
-        -registrationUDSPath /tmp/spire-registration.sock \
         -spiffeID spiffe://example.org/client \
         -selector k8s:container-name:spiffe-aware-client
 exit
@@ -169,8 +192,10 @@ exit
 With the entry created, `Service 1` gets an SVID and starts to requesting `https://spiffe-service:5000"`, which is the address of Service 2. Once we did not deploy the `Service 2` yet, the requests will fail.
 
 ```bash
-kubectl logs -f $(kubectl get pods -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spiffe-aware-client)
+kubectl logs -f \
+  $(kubectl get pods \
+  -o=jsonpath='{.items[0].metadata.name}' \
+  -l app=spiffe-aware-client)
 # press Ctrl+C to detach the logs
 ```
 
@@ -188,46 +213,69 @@ You should see an error caused by the kube-system DNS service like this:
 To post the session into CAS, we will use the `scone-cli` container again.
 
 ```bash
-kubectl cp services/2_spiffe_aware_service/session.yaml \
-    scone/$(kubectl get pods -n scone -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=scone-cli):2_spiffe_aware_service-session.yaml
+# Provide CLI address for next commands
+export SCONE_CLI_POD=$(kubectl -n scone get pods \
+  -o=jsonpath='{.items[0].metadata.name}' -l app=scone-cli)
 
-kubectl exec -it -n scone $(kubectl get pods -n scone -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=scone-cli)  -- /bin/bash
+# Copy over Service 2 session
+kubectl cp services/2_spiffe_aware_service/session.yaml \
+    scone/$SCONE_CLI_POD:2_spiffe_aware_service-session.yaml
+
+# Exec bash into CLI container
+kubectl exec -it -n scone $SCONE_CLI_POD -- /bin/bash
 
 # Inside the scone-cli container
 HASH_SERVICE_2=$(scone session create 2_spiffe_aware_service-session.yaml --use-env)
+
 # Get the session hash for Service 2
-echo $HASH_SERVICE_2
+echo "export HASH_SERVICE_2=$HASH_SERVICE_2"
+
 exit
 ```
 
-Copy the content of `$HASH_SERVICE_2`.
-
-```bash
-export HASH_SERVICE_2=<content copied from the scone-cli container>
-```
+Execute the export for `HASH_SERVICE_2`. We need it for the registration entry.
 
 Now, let's create a registration entry for `Service 2` using the SPIRE Server registration API.
 
-```bash
-# Inject $MY_NAMESPACE and $HASH_SERVICE_2 into spire-server container
-kubectl exec -it -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spire-server)  -- /bin/sh -c 'echo "export MY_NAMESPACE='$MY_NAMESPACE'" >> /root/.shrc'
+* **OBS:** Make sure the environment variable `HASH_SERVICE_2` has been exported before running the commands below. 
+* **OBS:** Make sure the environment variable `MY_NAMESPACE` has been exported before running the commands below. 
 
-kubectl exec -it -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spire-server)  -- /bin/sh -c 'echo "export HASH_SERVICE_2='$HASH_SERVICE_2'" >> /root/.shrc'
+```bash
+# Check if you have set the environment variable
+[[ -z "${MY_NAMESPACE}" ]] && \
+  echo -e '\nYou have not set the environment variable "MY_NAMESPACE" yet!\n'
+
+# Check if you have set the environment variable
+[[ -z "${HASH_SERVICE_2}" ]] && \
+  echo -e '\nYou have not set the environment variable "HASH_SERVICE_2" yet!\n'
+
+# Set Server address for next commands
+SPIRE_SERVER_POD=$(kubectl get pods -n spire \
+  -o=jsonpath='{.items[0].metadata.name}' -l app=spire-server)
+
+# Inject $MY_NAMESPACE spire-server container
+kubectl exec -it -n spire \
+  $SPIRE_SERVER_POD -- /bin/sh -c \
+  'echo "export MY_NAMESPACE='$MY_NAMESPACE'" >> /root/.shrc'
+
+# Inject $HASH_SERVICE_2 into spire-server container
+kubectl exec -it -n spire \
+  $SPIRE_SERVER_POD -- /bin/sh -c \
+  'echo "export HASH_SERVICE_2='$HASH_SERVICE_2'" >> /root/.shrc'
 
 # Enter the spire-server container to register Service 2
-kubectl exec -it -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spire-server) -- /bin/sh -c 'ENV=/root/.shrc /bin/sh'
+kubectl exec -it -n spire \
+  $SPIRE_SERVER_POD -- /bin/sh \
+  -c 'ENV=/root/.shrc /bin/sh'
 
+# Create Service 2 entry
 ./bin/spire-server entry create -parentID $AGENT_ID \
-        -registrationUDSPath /tmp/spire-registration.sock \
         -spiffeID spiffe://example.org/scone-service \
-        -selector svidstore:type:scone_cas_secretsmanager \
-        -selector cas_session_hash:$HASH_SERVICE_2 \
-        -selector cas_session_name:$MY_NAMESPACE/svid-session
+        -selector sconecas_sessionmanager:session_hash:$HASH_SERVICE_2 \
+        -selector sconecas_sessionmanager:session_name:$MY_NAMESPACE/svid-session \
+        -selector sconecas_sessionmanager:trust_bundle_session_name:$MY_NAMESPACE/bundle-session \
+        -storeSVID
+
 exit
 ```
 
@@ -241,7 +289,13 @@ kubectl logs -f -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].met
 
 Now, we can deploy `Service 2`.
 
+* **OBS:** Make sure the environment variable `MY_NAMESPACE` has been exported before running the commands below. 
+
 ```bash
+# Check if you have set the environment variable
+[[ -z "${MY_NAMESPACE}" ]] && \
+  echo -e '\nYou have not set the environment variable "MY_NAMESPACE" yet!\n'
+
 envsubst < services/2_spiffe_aware_service/deploy.yaml | kubectl apply -f -
 ```
 
@@ -249,13 +303,17 @@ Looking at `Service 2` logs, we can see that it received the SVID. However, it i
 
 ```bash
 # Service 2 - spiffe-service
-kubectl logs -f $(kubectl get pods -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spiffe-service)
+kubectl logs -f \
+  $(kubectl get pods \
+  -o=jsonpath='{.items[0].metadata.name}' \
+  -l app=spiffe-service)
 # press Ctrl+C to detach the logs
 
 # Service 1 - spiffe-aware-client
-kubectl logs -f $(kubectl get pods -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spiffe-aware-client)
+kubectl logs -f \
+  $(kubectl get pods \
+  -o=jsonpath='{.items[0].metadata.name}' \
+  -l app=spiffe-aware-client)
 # press Ctrl+C to detach the logs
 ```
 
@@ -266,55 +324,116 @@ kubectl logs -f $(kubectl get pods -o=jsonpath='{.items[0].metadata.name}' \
 Let's post a session for `Service 3` into CAS.
 
 ```bash
-kubectl cp services/3_secret_service/network-shielding-session.yaml \
-    scone/$(kubectl get pods -n scone -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=scone-cli):3_network-shielding-session.yaml
+# Provide CLI address for next commands
+export SCONE_CLI_POD=$(kubectl -n scone get pods \
+  -o=jsonpath='{.items[0].metadata.name}' -l app=scone-cli)
 
-kubectl exec -it -n scone $(kubectl get pods -n scone -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=scone-cli)  -- /bin/bash
+# Copy over Service 3 session
+kubectl cp services/3_secret_service/network-shielding-session.yaml \
+    scone/$SCONE_CLI_POD:3_network-shielding-session.yaml
+
+# Exec bash into cli container
+kubectl exec -it -n scone $SCONE_CLI_POD -- /bin/bash
 
 # Inside the scone-cli container
 HASH_SERVICE_3=$(scone session create 3_network-shielding-session.yaml --use-env)
-# Get the session hash for Service 2
-echo $HASH_SERVICE_3
+
+# Get the session hash for Service 3
+echo "export HASH_SERVICE_3=$HASH_SERVICE_3"
+
 exit
 ```
 
-Copy the content of `$HASH_SERVICE_3`.
+Copy the entire line that exports `HASH_SERVICE_3`. We'll use it in the registration entry.
+
+Now we need to create a registration entry for `Service 3`.
+
+* **OBS:** Make sure the environment variable `HASH_SERVICE_2` has been exported before running the commands below. 
+* **OBS:** Make sure the environment variable `MY_NAMESPACE` has been exported before running the commands below. 
 
 ```bash
-export HASH_SERVICE_3=<content copied from the scone-cli container>
-```
+# Check if you have set the environment variable
+[[ -z "${MY_NAMESPACE}" ]] && \
+  echo -e '\nYou have not set the environment variable "MY_NAMESPACE" yet!\n'
 
-Also, we need to create an registration entry for `Service 3`.
+# Check if you have set the environment variable
+[[ -z "${HASH_SERVICE_3}" ]] && \
+  echo -e '\nYou have not set the environment variable "HASH_SERVICE_3" yet!\n'
 
-```bash
+# Set Server address for next commands
+SPIRE_SERVER_POD=$(kubectl get pods -n spire \
+  -o=jsonpath='{.items[0].metadata.name}' -l app=spire-server)
+
 # Inject $HASH_SERVICE_3 into spire-server container
-kubectl exec -it -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spire-server)  -- /bin/sh -c 'echo "export HASH_SERVICE_3='$HASH_SERVICE_3'" >> /root/.shrc'
+kubectl exec -it -n spire \
+  $SPIRE_SERVER_POD  -- /bin/sh -c \
+  'echo "export HASH_SERVICE_3='$HASH_SERVICE_3'" >> /root/.shrc'
 
 # Enter the spire-server container to register Service 3
-kubectl exec -it -n spire $(kubectl get pods -n spire -o=jsonpath='{.items[0].metadata.name}' \
-    -l app=spire-server) -- /bin/sh -c 'ENV=/root/.shrc /bin/sh'
+kubectl exec -it -n spire \
+  $SPIRE_SERVER_POD -- /bin/sh -c 'ENV=/root/.shrc /bin/sh'
 
+# Create Service 3 entry
 ./bin/spire-server entry create -parentID $AGENT_ID \
-        -registrationUDSPath /tmp/spire-registration.sock \
         -spiffeID spiffe://example.org/scone-legacy-service \
-        -selector svidstore:type:scone_cas_secretsmanager \
-        -selector cas_session_hash:$HASH_SERVICE_3 \
-        -selector cas_session_name:$MY_NAMESPACE/netshield-session \
-        -dns secret-service
+        -selector sconecas_sessionmanager:session_hash:$HASH_SERVICE_3 \
+        -selector sconecas_sessionmanager:session_name:$MY_NAMESPACE/netshield-session \
+        -selector sconecas_sessionmanager:trust_bundle_session_name:$MY_NAMESPACE/netshield-ca-session \
+        -dns secret-service \
+        -storeSVID
+
 exit
 ```
 
 Now, we can deploy `Service 3`.
 
+* **OBS:** Make sure the environment variable `MY_NAMESPACE` has been exported before running the commands below. 
+
 ```bash
+# Check if you have set the environment variable
+[[ -z "${MY_NAMESPACE}" ]] && \
+  echo -e '\nYou have not set the environment variable "MY_NAMESPACE" yet!\n'
+
 envsubst < services/3_secret_service/deploy.yaml | kubectl apply -f -
 ```
 
 The `Service 3` will be protected by the network shielding, gaining an SPIFFE Identity from SPIRE. This identity is given after a successful attestation process.
 
+# Check services are working
+
+Run the following command to check the logs of Service 1:
+
+```bash
+# Service 1 - spiffe-aware-client
+kubectl logs -f \
+  $(kubectl get pods \
+  -o=jsonpath='{.items[0].metadata.name}' \
+  -l app=spiffe-aware-client)
+# press Ctrl+C to detach the logs
+
+```
+
+Service 1 should now be outputting in the following fashion:
+
+```bash
+---
+2021/12/13 14:28:01 Requesting counter...
+2021/12/13 14:28:01 {"secret":"Eve is good and Bob is the bad guy"}
+2021/12/13 14:28:01 
+---
+2021/12/13 14:28:11 Requesting counter...
+2021/12/13 14:28:11 {"secret":"Eve is good and Bob is the bad guy"}
+2021/12/13 14:28:11 
+---
+2021/12/13 14:28:21 Requesting counter...
+2021/12/13 14:28:21 {"secret":"Eve is good and Bob is the bad guy"}
+2021/12/13 14:28:21 
+---
+2021/12/13 14:28:31 Requesting counter...
+2021/12/13 14:28:31 {"secret":"Eve is good and Bob is the bad guy"}
+2021/12/13 14:28:31 
+---
+```
 
 # Clean up resources
 

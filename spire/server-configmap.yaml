@@ -8,7 +8,7 @@ data:
     server {
       bind_address = "0.0.0.0"
       bind_port = "8081"
-      registration_uds_path = "/tmp/spire-registration.sock"
+      socket_path = "/tmp/spire-server/private/api.sock"
       trust_domain = "example.org"
       data_dir = "/run/spire/data"
       log_level = "DEBUG"
@@ -35,16 +35,12 @@ data:
         plugin_data {
           clusters = {
             # NOTE: Change this to your cluster name
-            "kubernetes" = {
+            "minikube" = {
               use_token_review_api_validation = true
-              service_account_whitelist = ["spire:spire-agent"]
+              service_account_allow_list = ["spire:spire-agent"]
             }
           }
         }
-      }
-
-      NodeResolver "noop" {
-        plugin_data {}
       }
 
       KeyManager "disk" {
