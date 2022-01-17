@@ -98,22 +98,6 @@ scone session create scone-service-namespace.yaml --use-env
 exit
 ```
 
-Use the following commands from outside the repo to build the SPIRE server and agent images:
-
-```bash
-git clone https://github.com/ufcg-lsd/spire/ -b improve-usability
-
-cd spire
-
-eval $(minikube docker-env)
-make spire-server-image
-docker tag spire-server:latest-local spire-server:improve-usability
-
-eval $(minikube docker-env)
-make spire-agent-image
-docker tag spire-agent:latest-local spire-agent:improve-usability
-``` 
-
 Use the following commands to deploy the SPIRE Server.
 
 ```bash
