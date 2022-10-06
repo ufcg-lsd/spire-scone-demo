@@ -6,6 +6,8 @@ todo:
 
 - figure with components. -->
 
+**This demo uses only built images. The plugin source code can be found in [this repository](https://github.com/ufcg-lsd/spire/tree/scone-svidstore-plugin-v1).**
+
 # Preparing the K8s cluster
 
 Before starting,
