@@ -44,6 +44,8 @@ eval $(minikube docker-env)
 
 # Deploy SCONE and SPIRE Components
 
+Before installing the SCONE components, you must register an account in the SCONE registry. Please, follow the [Scontain documentation](https://sconedocs.github.io/helm/) on how to register your account and get an access token.
+
 Clone the this repo into your machine.
 
 ```bash
@@ -54,15 +56,18 @@ Deploy the SCONE components under the `scone` namespace: the Kubernetes-SGX devi
 
 ```bash
 # In the repository main directory
-kubectl apply -f scone/sgx-dev-plugin.yaml
-kubectl apply -f scone/scone-namespace.yaml 
-kubectl apply -f scone/las-daemonset.yaml
-kubectl apply -f scone/cli-scone.yaml
+export SCONE_HUB_USERNAME=...
+export SCONE_HUB_ACCESS_TOKEN=...
+export SCONE_HUB_EMAIL=...
 
+kubectl apply -f scone/scone-namespace.yaml
+kubectl create secret docker-registry sconeapps --docker-server=registry.scontain.com --docker-username=$SCONE_HUB_USERNAME --docker-password=$SCONE_HUB_ACCESS_TOKEN --docker-email=$SCONE_HUB_EMAIL --namespace scone
+
+kubectl apply -f scone/scone-local-components.yaml
 kubectl get pods -n scone
 ```
 
-In this demonstration, we will use a public CAS at `5-6-0.scone-cas.cf`. In order to use this CAS, we need to create a namepace to post the sessions (configuration and attestation info for confidential workloads) in a way to not overlap with other users.
+In this demonstration, we will use a public CAS at `scone-cas.cf`. In order to use this CAS, we need to create a namepace to post the sessions (configuration and attestation info for confidential workloads) in a way to not overlap with other users.
 
 To do this, we can create a random string to be our namespace name.
 
@@ -79,6 +84,11 @@ kubectl exec -it -n scone \
   $SCONE_CLI_POD -- /bin/bash \
   -c 'echo "export MY_NAMESPACE='$MY_NAMESPACE'" > /root/.bashrc'
 
+# Run sconecli in non-production mode, for this demonstration
+kubectl exec -it -n scone \
+  $SCONE_CLI_POD -- /bin/bash \
+  -c 'echo "export SCONE_PRODUCTION=0" >> /root/.bashrc'
+
 # Copy over scone session for namespace
 kubectl cp scone/scone-service-namespace.yaml \
     scone/$SCONE_CLI_POD:scone-service-namespace.yaml
@@ -90,7 +100,7 @@ kubectl exec -it -n scone $SCONE_CLI_POD  -- /bin/bash
 # Notice the prompt `bash-5.0#` indicating you're inside the container
 
 # Attest the CAS using 
-scone cas attest 5-6-0.scone-cas.cf \
+scone cas attest scone-cas.cf \
   -C -G --only_for_testing-trust-any \
   --only_for_testing-debug --only_for_testing-ignore-signer
 
@@ -100,36 +110,21 @@ scone session create scone-service-namespace.yaml --use-env
 exit
 ```
 
-Use the following commands to deploy the SPIRE Server.
+Use the following commands to deploy the SPIRE Server and SPIRE Agent.
 
 ```bash
 kubectl apply -f spire/spire-namespace.yaml
-kubectl apply -f spire/server-account.yaml
-kubectl apply -f spire/server-cluster-role.yaml
-kubectl apply -f spire/server-configmap.yaml
-kubectl apply -f spire/spire-bundle-configmap.yaml
-kubectl apply -f spire/server-statefulset.yaml
-kubectl apply -f spire/server-service.yaml
-```
-
-Now, deploy a SPIRE Agent configured with a SCONE SGX related plugin.
-
-```bash
-kubectl apply -f spire/agent-account.yaml
-kubectl apply -f spire/agent-cluster-role.yaml
-kubectl apply -f spire/agent-configmap.yaml
-kubectl apply -f spire/agent-daemonset.yaml
-
+kubectl apply -f spire/spire-server.yaml
+kubectl apply -f spire/spire-agent.yaml
 kubectl get pods -n spire
 ```
 
-* **OBS:** The file `spire/agent-configmap.yaml` contains among other configuration for the SPIRE Agent the templates used by the "sconecas_sessionmanager" plugin. These templates are the skeleton of the scone sessions that will be posted by the plugin. A service gets its SVID by importing secrets from these sessions that we can peek at `spire/agent-configmap.yaml`. 
-
+* **OBS:** The ConfigMap in `spire/spire-agent.yaml` contains, among other configuration for the SPIRE Agent, the templates used by the "sconecas_sessionmanager" plugin. These templates are the skeleton of the scone sessions that will be posted by the plugin. A service gets its SVID by importing secrets from these sessions that we can peek at `spire/agent-configmap.yaml`. 
 
 Wait for the Agent to present the message `msg="Starting Workload and SDS APIs"`, like below.
 
 ```bash
-time="2021-07-07T14:00:40Z" level=info msg="Starting Workload and SDS APIs" subsystem_name=endpoints
+time="2036-07-07T14:00:40Z" level=info msg="Starting Workload and SDS APIs" subsystem_name=endpoints
 ```
 You can use `kubectl` to watch the Agent logs.
 
@@ -204,8 +199,8 @@ kubectl logs -f \
 You should see an error caused by the kube-system DNS service like this:
 
 ```
-2021/07/06 18:45:03 Requesting counter...
-2021/07/06 18:45:03 Error connecting to "https://spiffe-service:5000": Get "https://spiffe-service:5000": dial tcp: lookup spiffe-service on 10.96.0.10:53: server misbehaving
+2088/07/06 18:45:03 Requesting counter...
+2088/07/06 18:45:03 Error connecting to "https://spiffe-service:5000": Get "https://spiffe-service:5000": dial tcp: lookup spiffe-service on 10.96.0.10:53: server misbehaving
 ```
 
 ## Service 2 - SPIFFE aware SGX-SCONE-enabled service
@@ -419,21 +414,21 @@ Service 1 should now be outputting in the following fashion:
 
 ```bash
 ---
-2021/12/13 14:28:01 Requesting counter...
-2021/12/13 14:28:01 {"secret":"Eve is good and Bob is the bad guy"}
-2021/12/13 14:28:01 
+2077/12/13 14:28:01 Requesting counter...
+2077/12/13 14:28:01 {"secret":"Eve is good and Bob is the bad guy"}
+2077/12/13 14:28:01 
 ---
-2021/12/13 14:28:11 Requesting counter...
-2021/12/13 14:28:11 {"secret":"Eve is good and Bob is the bad guy"}
-2021/12/13 14:28:11 
+2077/12/13 14:28:11 Requesting counter...
+2077/12/13 14:28:11 {"secret":"Eve is good and Bob is the bad guy"}
+2077/12/13 14:28:11 
 ---
-2021/12/13 14:28:21 Requesting counter...
-2021/12/13 14:28:21 {"secret":"Eve is good and Bob is the bad guy"}
-2021/12/13 14:28:21 
+2077/12/13 14:28:21 Requesting counter...
+2077/12/13 14:28:21 {"secret":"Eve is good and Bob is the bad guy"}
+2077/12/13 14:28:21 
 ---
-2021/12/13 14:28:31 Requesting counter...
-2021/12/13 14:28:31 {"secret":"Eve is good and Bob is the bad guy"}
-2021/12/13 14:28:31 
+2077/12/13 14:28:31 Requesting counter...
+2077/12/13 14:28:31 {"secret":"Eve is good and Bob is the bad guy"}
+2077/12/13 14:28:31 
 ---
 ```
 

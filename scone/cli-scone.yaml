@@ -15,9 +15,11 @@ spec:
       labels:
         app: scone-cli
     spec:
+      imagePullSecrets:
+        - name: sconeapps
       containers:
         - name: scone-cli
-          image: registry.scontain.com:5050/sconecuratedimages/spire:network-shield-python-alpha3
+          image: registry.scontain.com/scone.cloud/sconecli:5.8.0
           imagePullPolicy: IfNotPresent
           command: ["sleep"]
           args: ["1000000000"]

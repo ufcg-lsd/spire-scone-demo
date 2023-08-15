@@ -1,0 +1,278 @@
+---
+
+# Required cluster role to allow spire-agent to query k8s API server
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: spire-agent-cluster-role
+rules:
+- apiGroups: [""]
+  resources: ["pods","nodes","nodes/proxy"]
+  verbs: ["get"]
+
+---
+# Binds above cluster role to spire-agent service account
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: spire-agent-cluster-role-binding
+subjects:
+- kind: ServiceAccount
+  name: spire-agent
+  namespace: spire
+roleRef:
+  kind: ClusterRole
+  name: spire-agent-cluster-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spire-agent
+  namespace: spire
+
+
+---
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spire-agent
+  namespace: spire
+  labels:
+    app: spire-agent
+spec:
+  selector:
+    matchLabels:
+      app: spire-agent
+  template:
+    metadata:
+      namespace: spire
+      labels:
+        app: spire-agent
+    spec:
+      hostPID: true
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: spire-agent
+      initContainers:
+        - name: init
+          # This is a small image with wait-for-it, choose whatever image
+          # you prefer that waits for a service to be up. This image is built
+          # from https://github.com/lqhl/wait-for-it
+          image: gcr.io/spiffe-io/wait-for-it
+          args: ["-t", "30", "spire-server:8081"]
+      containers:
+        - name: spire-agent
+          image: silvamatteus/spire-agent:sconecas-svidstore
+          imagePullPolicy: Always
+          # image: ghcr.io/spiffe/spire-agent:1.6.1
+          args: ["-config", "/run/spire/config/agent.conf"]
+          env:
+          - name: MY_NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          volumeMounts:
+            - name: spire-config
+              mountPath: /run/spire/config
+              readOnly: true
+            - name: spire-agent-socket
+              mountPath: /run/spire/sockets
+              readOnly: false
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: 8080
+            failureThreshold: 2
+            initialDelaySeconds: 15
+            periodSeconds: 60
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: spire-config
+          configMap:
+            name: spire-agent
+        - name: spire-agent-socket
+          hostPath:
+            path: /run/spire/sockets
+            type: DirectoryOrCreate
+
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-agent
+  namespace: spire
+data:
+  agent.conf: |
+    agent {
+      data_dir = "/run/spire"
+      log_level = "DEBUG"
+      server_address = "spire-server"
+      server_port = "8081"
+      socket_path = "/run/spire/sockets/agent.sock"
+      trust_bundle_path = "/run/spire/config/bootstrap.crt"
+      trust_domain = "example.org"
+    }
+
+    plugins {
+      NodeAttestor "k8s_sat" {
+        plugin_data {
+          cluster = "demo-cluster"
+        }
+      }
+
+      KeyManager "memory" {
+        plugin_data {
+        }
+      }
+
+      WorkloadAttestor "k8s" {
+        plugin_data {
+          # Defaults to the secure kubelet port by default.
+          # Minikube does not have a cert in the cluster CA bundle that
+          # can authenticate the kubelet cert, so skip validation.
+          skip_kubelet_verification = true
+          node_name_env = "MY_NODE_NAME"
+        }
+      }
+
+      SVIDStore "sconecas_sessionmanager" {
+        plugin_data {
+          cas_connection_string = "https://scone-cas.cf:8081"
+          cas_client_certificate = "/run/spire/config/session.crt"
+          cas_client_key = "/run/spire/config/session.key"
+          trust_anchor_certificate = "/run/spire/config/trustanchor.pem"
+          insecure_skip_verify_tls = true
+
+          cas_predecessor_dir = "/run/spire/data/store-svid-scone"
+          svid_session_template_file = "/run/spire/config/svid_session_template.yaml"
+          bundle_session_template_file = "/run/spire/config/ca_session_template.yaml"
+          federated_bundles_session_template_file = "/run/spire/config/fed_bundles_session_template.yaml"
+        }
+      }
+    }
+
+    health_checks {
+      listener_enabled = true
+      bind_address = "0.0.0.0"
+      bind_port = "8080"
+      live_path = "/live"
+      ready_path = "/ready"
+    }
+  bootstrap.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIICHzCCAaSgAwIBAgIJAJjG+BUpVpUbMAoGCCqGSM49BAMEMB4xCzAJBgNVBAYT
+    AlVTMQ8wDQYDVQQKDAZTUElGRkUwHhcNMjMwNjA5MjM0OTQxWhcNMjgwNjA3MjM0
+    OTQxWjAeMQswCQYDVQQGEwJVUzEPMA0GA1UECgwGU1BJRkZFMHYwEAYHKoZIzj0C
+    AQYFK4EEACIDYgAERWdqmbBWmk7iKDFD7MuI8O2oBrXMpfZPC+Nz3dLRPWu44z3C
+    51MPk9GJDAoNsqpyZ9sHOnL8I+CdkmE41LqK/rigvKgvlrlqWJjf0/FAM/XLARaW
+    rzcpRty42WJgR5Yxo4GtMIGqMB0GA1UdDgQWBBRXKdGnbiP9nul87xm5F30yxRWT
+    VjAfBgNVHSMEGDAWgBRXKdGnbiP9nul87xm5F30yxRWTVjAPBgNVHRMBAf8EBTAD
+    AQH/MCwGCWCGSAGG+EIBDQQfFh1PcGVuU1NMIEdlbmVyYXRlZCBDZXJ0aWZpY2F0
+    ZTAOBgNVHQ8BAf8EBAMCAQYwGQYDVR0RBBIwEIYOc3BpZmZlOi8vbG9jYWwwCgYI
+    KoZIzj0EAwQDaQAwZgIxAKHxaBfSjhDJksGXmgJKkcpepPCYfB58hUc3HkxPy3Zf
+    08dfaeAp7UdBCkpU20GSrQIxAJc0FMZs1BSSINku6oYZpsrcCuo7CijAJMLCBLXQ
+    VYYO6xcbDgbZVm5MXu3FWTt+7g==
+    -----END CERTIFICATE-----
+
+  session.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIBUjCB+KADAgECAghAi/QiWP7k0TAKBggqhkjOPQQDAjAhMR8wHQYDVQQDDBZy
+    Y2dlbiBzZWxmIHNpZ25lZCBjZXJ0MCAXDTc1MDEwMTAwMDAwMFoYDzQwOTYwMTAx
+    MDAwMDAwWjAhMR8wHQYDVQQDDBZyY2dlbiBzZWxmIHNpZ25lZCBjZXJ0MFkwEwYH
+    KoZIzj0CAQYIKoZIzj0DAQcDQgAEQMUosys6SKZvkiY75Q1PkBAxEOV+yMQjufdw
+    pCrvJJNaC3cgcpaqD6bzOLY+hfB9ULmIM/KqFMebxk/XYCZsK6MYMBYwFAYDVR0R
+    BA0wC4IJc2NvbmUgY2xpMAoGCCqGSM49BAMCA0kAMEYCIQCiv2bDPOstQi1tVGaj
+    1md8izBRIjHF1YQ4CIMu7qNWHQIhAI2Ra4+0xyC2yCi1bQjPvTWBEZfp6ftIL6e0
+    7JZwR/JM
+    -----END CERTIFICATE-----
+  session.key: |
+    -----BEGIN PRIVATE KEY-----
+    MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgGRC5z9QIiWm/X5NW
+    b/uk1sM/eX/qoBaOR0mQVR+qnbuhRANCAARAxSizKzpIpm+SJjvlDU+QEDEQ5X7I
+    xCO593CkKu8kk1oLdyBylqoPpvM4tj6F8H1QuYgz8qoUx5vGT9dgJmwr
+    -----END PRIVATE KEY-----
+  svid_session_template.yaml: |
+    name: <\session-name-selector>-injector
+    version: "0.3"
+    predecessor: <\predecessor>
+    secrets:
+      - name: svid
+        kind: x509
+        value: |
+            <\svid>
+        issuer: svid-intermediates
+        export:
+            session: <\session-name-selector>
+            session_hash: <\session-hash-selector>
+        private_key: svid_key
+      - name: svid-intermediates
+        kind: x509-ca
+        value: |
+            <\svid-intermediates>
+        export:
+            session: <\session-name-selector>
+            session_hash: <\session-hash-selector>
+      - name: svid_key
+        kind: private-key
+        value: |
+            <\svid-key>
+        export:
+            session: <\session-name-selector>
+            session_hash: <\session-hash-selector>
+    
+  ca_session_template.yaml: |
+    name: <\trust-bundle-session-name>-injector
+    version: "0.3"
+    predecessor: <\predecessor>
+    secrets:
+      - name: spire-ca
+        kind: x509-ca
+        export_public: true
+        value: |
+            <\trust-bundle>
+
+  fed_bundles_session_template.yaml: |
+    name: <\fed-bundles-session-name>
+    version: "0.3"
+    predecessor: <\predecessor>
+    secrets:
+      - name: spire-federated-bundles
+        kind: x509-ca
+        export_public: true
+        value: |
+            <\federated-bundles>
+
+  # Ignored in some debug images
+  # to simplify the demonstration.
+  # In a real scenario, a valid trust anchor must be set. 
+  trustanchor.pem: |
+    -----BEGIN CERTIFICATE-----
+    MIIBTDCB86ADAgECAgg1G+RSFFLgNjAKBggqhkjOPQQDAjAOMQwwCgYDVQQDDANj
+    YXMwHhcNMjMwNzEzMTMxMzA4WhcNMjQwNzEyMTMxMzA4WjAXMRUwEwYDVQQDDAxj
+    YXMtaW5zdGFuY2UwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARE8eEQGEoE+M2a
+    UgBvmcsy0+hwsu+Y3vGA0XkHbfEx4N+/cRXGr7SH+f7tzvKB1WMzcOXgSL89T8g3
+    y7mLttyTozIwMDAdBgNVHQ4EFgQUzjTJku6mlMTE3209ibxcQGHUwH8wDwYDVR0T
+    AQH/BAUwAwEB/zAKBggqhkjOPQQDAgNIADBFAiAO++paHi4XSnNTjAaQ7YN5HwNe
+    cCyeuUx1sBuQUDr3VgIhAP0BSoK9qQAVujChIR/GOjedHB+B6j3tuBcAYoDcmWfM
+    -----END CERTIFICATE-----
+    -----BEGIN CERTIFICATE-----
+    MIIBQzCB66ADAgECAgkAsD88XTN+9KswCgYIKoZIzj0EAwIwDjEMMAoGA1UEAwwD
+    Y2FzMB4XDTIzMDcxMzEzMTMwOFoXDTI0MDcxMjEzMTMwOFowDjEMMAoGA1UEAwwD
+    Y2FzMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEuThGis9y8eihudVjYnQ5sDtN
+    YtYMe+pFPKsdbRSfXxyWT2n95pP6DTVqa95Ib41glYtvprY4AJL/qfIo0djkGKMy
+    MDAwHQYDVR0OBBYEFDqFbWWBedVhjxib2D/Jn3BHnxZ8MA8GA1UdEwEB/wQFMAMB
+    Af8wCgYIKoZIzj0EAwIDRwAwRAIgW6rakAIYpzTkil4flolWZqPGHWOopcwTNolM
+    w9EVvSsCIHizFi0oymdWSQRy2KtCrjA+16j7QU9zqqo1/SGhTKCG
+    -----END CERTIFICATE-----
